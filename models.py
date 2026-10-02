@@ -5,6 +5,7 @@ models.py – Plain data classes shared across modules.
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Optional
 
 
 class Impact(str, Enum):
@@ -25,14 +26,16 @@ class Signal(str, Enum):
 class EconomicEvent:
     """Represents a single row from the Forex Factory calendar."""
 
-    event_id: str           # Unique identifier (date + title hash)
-    title: str              # Event title, e.g. "Non-Farm Payrolls"
-    currency: str           # "USD", "EUR", etc.
-    impact: Impact          # High / Medium / Low
+    event_id: str           # Unique identifier (e.g. "146912")
+    title: str              # Event title, e.g. "Non-Farm Employment Change"
+    currency: str           # "USD"
+    impact: Impact          # High
     actual: str             # Raw string from the page (empty before release)
     forecast: str           # Raw string from the page
     previous: str           # Raw string from the page
     event_time: str         # Human-readable time string from the page
+    event_datetime: Optional[datetime] = None  # Scheduled datetime of the event
+    minutes_until: Optional[float] = None      # Minutes until release from current clock
     scraped_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
@@ -43,7 +46,7 @@ class EconomicEvent:
     def __repr__(self) -> str:
         return (
             f"<EconomicEvent '{self.title}' "
-            f"actual={self.actual!r} forecast={self.forecast!r}>"
+            f"actual={self.actual!r} forecast={self.forecast!r} min_left={self.minutes_until}>"
         )
 
 
