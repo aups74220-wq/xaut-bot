@@ -7,6 +7,7 @@ Includes support for:
 - Parsing event date and time into Python datetime objects.
 - Calculating minutes remaining until the event based on the page's current clock.
 - Retrieving actual, forecast, and previous values.
+- Getting the most recent past event and the next upcoming event.
 """
 
 from __future__ import annotations
@@ -98,13 +99,13 @@ def _cell_text(cell) -> str:
     return cell.get_text(separator=" ", strip=True)
 
 
-def _fetch_html_calendar(session: requests.Session) -> list[EconomicEvent]:
+def _fetch_html_calendar(session: requests.Session, url: str = FF_CALENDAR_URL) -> list[EconomicEvent]:
     """
     Scrape the Forex Factory HTML calendar page.
     Extracts high-impact USD events with date/time, remaining minutes, actual, forecast, and previous data.
     """
-    logger.debug("Fetching HTML calendar: %s", FF_CALENDAR_URL)
-    response = session.get(FF_CALENDAR_URL, timeout=_REQUEST_TIMEOUT)
+    logger.debug("Fetching HTML calendar from: %s", url)
+    response = session.get(url, timeout=_REQUEST_TIMEOUT)
     response.raise_for_status()
 
     soup = BeautifulSoup(response.text, _HTML_PARSER)
@@ -177,11 +178,11 @@ def _fetch_html_calendar(session: requests.Session) -> list[EconomicEvent]:
             )
         )
 
-    logger.info("Forex Factory scraper: found %d high-impact USD events (page clock: %s)", len(events), page_clock)
+    logger.info("Forex Factory scraper: found %d high-impact USD events", len(events))
     return events
 
 
-def fetch_forexfactory_calendar() -> list[EconomicEvent]:
+def fetch_forexfactory_calendar(url: str = FF_CALENDAR_URL) -> list[EconomicEvent]:
     """
     Fetch high-impact USD events with retries.
     """
@@ -190,7 +191,7 @@ def fetch_forexfactory_calendar() -> list[EconomicEvent]:
 
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
         try:
-            return _fetch_html_calendar(session)
+            return _fetch_html_calendar(session, url=url)
         except requests.RequestException as exc:
             last_exc = exc
             logger.warning("Scraper network error on attempt %d/%d: %s", attempt, _RETRY_ATTEMPTS, exc)
@@ -199,3 +200,39 @@ def fetch_forexfactory_calendar() -> list[EconomicEvent]:
 
     logger.error("Scraper failed after %d attempts: %s", _RETRY_ATTEMPTS, last_exc)
     return []
+
+
+def get_past_and_next_events() -> tuple[Optional[EconomicEvent], Optional[EconomicEvent]]:
+    """
+    Identify:
+    1. The most recent past high-impact USD event (with actuals or past time).
+    2. The next upcoming high-impact USD event (looking into next week if needed).
+    """
+    this_week_events = fetch_forexfactory_calendar()
+
+    past_events = [
+        e for e in this_week_events
+        if e.has_actual or (e.minutes_until is not None and e.minutes_until <= 0)
+    ]
+    future_events = [
+        e for e in this_week_events
+        if not e.has_actual and (e.minutes_until is not None and e.minutes_until > 0)
+    ]
+
+    last_past = past_events[-1] if past_events else None
+    next_future = future_events[0] if future_events else None
+
+    # If no upcoming events left in the current week, check next week's calendar
+    if next_future is None:
+        try:
+            next_week_events = fetch_forexfactory_calendar("https://www.forexfactory.com/calendar?week=next")
+            next_future_candidates = [
+                e for e in next_week_events
+                if not e.has_actual
+            ]
+            if next_future_candidates:
+                next_future = next_future_candidates[0]
+        except Exception as exc:
+            logger.error("Failed to fetch next week's events: %s", exc)
+
+    return last_past, next_future
