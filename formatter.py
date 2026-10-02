@@ -1,41 +1,36 @@
 """
 formatter.py – Telegram message builder.
 
-Produces MarkdownV2-safe messages for aiogram 3.x.
-All times are explicitly presented in Yerevan time (UTC+4).
+Uses HTML parse mode for reliable, resilient formatting without entity errors.
+All event times are presented in Yerevan time (UTC+4).
 """
 
 from __future__ import annotations
 
-import re
+import html
 from datetime import datetime, timedelta, timezone
 
 from analyzer import analyze_event
 from models import EconomicEvent, Signal, TradeSignal
 
-# Characters that must be escaped in MarkdownV2
-_SPECIAL_CHARS = r"_*[]()~`>#+-=|{}.!"
-
 YEREVAN_TZ = timezone(timedelta(hours=4))
 
 
-def _escape(text: str) -> str:
-    """Escape all MarkdownV2 special characters in *text*."""
-    return re.sub(r"([" + re.escape(_SPECIAL_CHARS) + r"])", r"\\\1", str(text))
+def _esc(text: str) -> str:
+    """Escape HTML special characters."""
+    return html.escape(str(text))
 
 
 def _signal_header(signal: Signal) -> str:
     if signal == Signal.LONG:
-        return "🟢 ЛОНГ / ПОКУПКА \\(ВВЕРХ 📈\\)"
+        return "🟢 <b>ЛОНГ / ПОКУПКА (ВВЕРХ 📈)</b>"
     if signal == Signal.SHORT:
-        return "🔴 ШОРТ / ПРОДАЖА \\(ВНИЗ 📉\\)"
-    return "⚪ НЕЙТРАЛЬНО \\(ВНЕ РЫНКА ➡️\\)"
+        return "🔴 <b>ШОРТ / ПРОДАЖА (ВНИЗ 📉)</b>"
+    return "⚪ <b>НЕЙТРАЛЬНО (ВНЕ РЫНКА ➡️)</b>"
 
 
 def format_yerevan_time(event: EconomicEvent) -> str:
-    """
-    Format the event's date and time into Yerevan timezone (UTC+4).
-    """
+    """Format the event's date and time into Yerevan timezone (UTC+4)."""
     now_yerevan = datetime.now(YEREVAN_TZ)
     if event.minutes_until is not None:
         ev_dt = now_yerevan + timedelta(minutes=event.minutes_until)
@@ -46,9 +41,7 @@ def format_yerevan_time(event: EconomicEvent) -> str:
 
 
 def format_past_event_message(event: EconomicEvent) -> str:
-    """
-    Message 1: details of the most recent past high-impact USD economic news.
-    """
+    """Message 1: details of the most recent past high-impact USD economic news."""
     yerevan_time = format_yerevan_time(event)
     sig = analyze_event(event)
 
@@ -61,29 +54,27 @@ def format_past_event_message(event: EconomicEvent) -> str:
         reaction_text = "Данные опубликованы."
 
     lines = [
-        "📜 *ПРОШЛАЯ НОВОСТЬ (USD)*",
+        "📜 <b>ПРОШЛАЯ НОВОСТЬ (USD)</b>",
         "━━━━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        f"📌 *Событие:* {_escape(event.title)}",
-        f"🕐 *Была:* {_escape(yerevan_time)}",
-        "🔴 *Сила новости:* ВЫСОКАЯ \\(High Impact / Красная\\)",
+        f"📌 <b>Событие:</b> {_esc(event.title)}",
+        f"🕐 <b>Была:</b> {_esc(yerevan_time)}",
+        "🔴 <b>Сила новости:</b> ВЫСОКАЯ (High Impact / Красная)",
         "",
-        "📊 *Показатели:*",
-        f"• *Факт:* `{_escape(event.actual or '—')}`",
-        f"• *Прогноз:* `{_escape(event.forecast or '—')}`",
-        f"• *Предыдущее:* `{_escape(event.previous or '—')}`",
+        "📊 <b>Показатели:</b>",
+        f"• <b>Факт:</b> <code>{_esc(event.actual or '—')}</code>",
+        f"• <b>Прогноз:</b> <code>{_esc(event.forecast or '—')}</code>",
+        f"• <b>Предыдущее:</b> <code>{_esc(event.previous or '—')}</code>",
         "",
-        "💡 *Итог реакции рынка:*",
-        _escape(reaction_text),
+        "💡 <b>Итог реакции рынка:</b>",
+        _esc(reaction_text),
         "━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
     return "\n".join(lines)
 
 
 def format_next_event_message(event: EconomicEvent) -> str:
-    """
-    Message 2: details of the next upcoming high-impact USD economic news.
-    """
+    """Message 2: details of the next upcoming high-impact USD economic news."""
     yerevan_time = format_yerevan_time(event)
 
     remaining_str = ""
@@ -103,88 +94,75 @@ def format_next_event_message(event: EconomicEvent) -> str:
         remaining_str = "В ближайшие дни"
 
     lines = [
-        "⏳ *СЛЕДУЮЩАЯ НОВОСТЬ (USD)*",
+        "⏳ <b>СЛЕДУЮЩАЯ НОВОСТЬ (USD)</b>",
         "━━━━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        f"📌 *Событие:* {_escape(event.title)}",
-        f"🕐 *Когда выйдет:* {_escape(yerevan_time)}",
-        "🔴 *Сила новости:* ВЫСОКАЯ \\(High Impact / Красная\\)",
-        f"⏱ *До выхода осталось:* ~{_escape(remaining_str)}",
+        f"📌 <b>Событие:</b> {_esc(event.title)}",
+        f"🕐 <b>Когда выйдет:</b> {_esc(yerevan_time)}",
+        "🔴 <b>Сила новости:</b> ВЫСОКАЯ (High Impact / Красная)",
+        f"⏱ <b>До выхода осталось:</b> ~{_esc(remaining_str)}",
         "",
-        (
-            f"📊 *Прогноз:* `{_escape(event.forecast or '—')}`  \\|  "
-            f"*Пред\\.:* `{_escape(event.previous or '—')}`"
-        ),
+        f"📊 <b>Прогноз:</b> <code>{_esc(event.forecast or '—')}</code>  |  <b>Пред.:</b> <code>{_esc(event.previous or '—')}</code>",
         "",
-        "🎯 *Ожидание по сделке XAUT/USDT:*",
-        "• Если факт выйдет *лучше прогноза* \\(сильный USD\\) ➔ сигнал будет *ШОРТ* \\(📉 Вниз\\)\\.",
-        "• Если факт выйдет *хуже прогноза* \\(слабый USD\\) ➔ сигнал будет *ЛОНГ* \\(📈 Вверх\\)\\.",
+        "🎯 <b>Ожидание по сделке XAUT/USDT:</b>",
+        "• Если факт выйдет <b>лучше прогноза</b> (сильный USD) ➔ сигнал будет <b>ШОРТ (📉 Вниз)</b>.",
+        "• Если факт выйдет <b>хуже прогноза</b> (слабый USD) ➔ сигнал будет <b>ЛОНГ (📈 Вверх)</b>.",
         "",
-        "🔔 _Бот пришлет напоминания за 1 час, 30 минут и 5 минут до выхода\\!_",
+        "🔔 <i>Бот пришлет автоматические напоминания за 1 час, 30 минут и 5 минут до выхода!</i>",
         "━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
     return "\n".join(lines)
 
 
 def format_pre_news_alert(event: EconomicEvent, minutes_left: int) -> str:
-    """
-    Alert sent 60m, 30m, and 5m before the scheduled economic news release.
-    """
+    """Alert sent 60m, 30m, and 5m before the scheduled economic news release."""
     time_label = f"{minutes_left} минут" if minutes_left != 60 else "1 час (60 мин)"
     yerevan_time = format_yerevan_time(event)
 
     lines = [
-        "⏳ *ВНИМАНИЕ: СКОРО ВЫХОД НОВОСТЕЙ (USD)*",
+        "⏳ <b>ВНИМАНИЕ: СКОРО ВЫХОД НОВОСТЕЙ (USD)</b>",
         "━━━━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        f"⏱ *До публикации осталось:* ~{_escape(time_label)}",
-        f"📌 *Событие:* {_escape(event.title)}",
-        f"🕐 *Время выхода:* {_escape(yerevan_time)}",
+        f"⏱ <b>До публикации осталось:</b> ~{_esc(time_label)}",
+        f"📌 <b>Событие:</b> {_esc(event.title)}",
+        f"🕐 <b>Время выхода:</b> {_esc(yerevan_time)}",
+        "🔴 <b>Сила новости:</b> ВЫСОКАЯ (High Impact / Красная)",
         "",
-        (
-            f"📊 *Прогноз:* `{_escape(event.forecast or '—')}`  \\|  "
-            f"*Пред\\.:* `{_escape(event.previous or '—')}`"
-        ),
+        f"📊 <b>Прогноз:</b> <code>{_esc(event.forecast or '—')}</code>  |  <b>Пред.:</b> <code>{_esc(event.previous or '—')}</code>",
         "",
-        "🎯 *Ожидание по сделке XAUT/USDT:*",
-        "• Если факт выйдет *лучше прогноза* \\(сильный USD\\) ➔ сигнал будет *ШОРТ* \\(📉 Вниз\\)\\.",
-        "• Если факт выйдет *хуже прогноза* \\(слабый USD\\) ➔ сигнал будет *ЛОНГ* \\(📈 Вверх\\)\\.",
+        "🎯 <b>Ожидание по сделке XAUT/USDT:</b>",
+        "• Если факт выйдет <b>лучше прогноза</b> (сильный USD) ➔ сигнал будет <b>ШОРТ (📉 Вниз)</b>.",
+        "• Если факт выйдет <b>хуже прогноза</b> (слабый USD) ➔ сигнал будет <b>ЛОНГ (📈 Вверх)</b>.",
         "",
-        "⚠️ _Приготовьте терминал\\. Точный торговый сигнал придет в секунду выхода данных\\!_",
+        "⚠️ <i>Приготовьте терминал. Точный торговый сигнал придет в секунду выхода данных!</i>",
         "━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
     return "\n".join(lines)
 
 
 def format_signal_message(ts: TradeSignal) -> str:
-    """
-    Build a fully-escaped MarkdownV2 Telegram message for the published trade signal.
-    """
+    """Build a Telegram HTML message for the published trade signal."""
     ev = ts.event
     yerevan_time = format_yerevan_time(ev)
 
     lines = [
-        "🚨 *ТОРГОВЫЙ СИГНАЛ ПО XAUT/USDT*",
+        "🚨 <b>ТОРГОВЫЙ СИГНАЛ ПО XAUT/USDT</b>",
         "━━━━━━━━━━━━━━━━━━━━━━━━━",
         "",
-        f"📌 *Событие:* {_escape(ev.title)}",
-        f"🕐 *Время выхода:* {_escape(yerevan_time)}",
+        f"📌 <b>Событие:</b> {_esc(ev.title)}",
+        f"🕐 <b>Время выхода:</b> {_esc(yerevan_time)}",
+        "🔴 <b>Сила новости:</b> ВЫСОКАЯ (High Impact / Красная)",
         "",
-        (
-            f"📊 *Факт:* `{_escape(ev.actual or '—')}`  \\|  "
-            f"*Прогноз:* `{_escape(ev.forecast or '—')}`  \\|  "
-            f"*Пред\\.:* `{_escape(ev.previous or '—')}`"
-        ),
+        f"📊 <b>Факт:</b> <code>{_esc(ev.actual or '—')}</code>  |  <b>Прогноз:</b> <code>{_esc(ev.forecast or '—')}</code>  |  <b>Пред.:</b> <code>{_esc(ev.previous or '—')}</code>",
         "",
-        "🎯 *РЕКОМЕНДАЦИЯ К СДЕЛКЕ:*",
-        f"*{_signal_header(ts.signal)}*",
+        "🎯 <b>РЕКОМЕНДАЦИЯ К СДЕЛКЕ:</b>",
+        f"{_signal_header(ts.signal)}",
         "",
-        "💡 *Обоснование:*",
-        _escape(ts.rationale_ru),
+        "💡 <b>Обоснование:</b>",
+        _esc(ts.rationale_ru),
         "",
         "━━━━━━━━━━━━━━━━━━━━━━━━━",
     ]
-
     return "\n".join(lines)
 
 
@@ -192,13 +170,13 @@ def format_startup_message(poll_interval: int) -> str:
     """Confirmation message sent when the bot starts up."""
     now_yerevan = datetime.now(YEREVAN_TZ).strftime("%d.%m.%Y %H:%M (Ереван)")
     return (
-        "✅ *XAUT/USDT Signal Bot активен 24/7\\!*\n\n"
-        f"🔍 Мониторинг: Forex Factory \\(USD, High Impact\\)\n"
-        f"⏰ Интервал проверки: каждые *{_escape(str(poll_interval))} сек*\\.\n"
-        f"📡 Актив: *XAUT/USDT* \\(Tether Gold\\)\n"
-        "🔔 *Уведомления:* за 1 час, за 30 мин, за 5 мин и в момент публикации\\!\n"
-        "🌍 *Часовой пояс:* Время Ереван \\(UTC\\+4\\)\n\n"
-        f"_Старт: {_escape(now_yerevan)}_"
+        "✅ <b>XAUT/USDT Signal Bot активен 24/7!</b>\n\n"
+        f"🔍 Мониторинг: Forex Factory (USD, High Impact)\n"
+        f"⏰ Интервал проверки: каждые <b>{poll_interval} сек</b>.\n"
+        f"📡 Актив: <b>XAUT/USDT</b> (Tether Gold)\n"
+        "🔔 <b>Уведомления:</b> за 1 час, за 30 мин, за 5 мин и в момент публикации!\n"
+        "🌍 <b>Часовой пояс:</b> Время Ереван (UTC+4)\n\n"
+        f"<i>Старт: {now_yerevan}</i>"
     )
 
 
@@ -210,9 +188,9 @@ def format_status_message(
     """Periodic status update (used by /status command)."""
     now_yerevan = datetime.now(YEREVAN_TZ).strftime("%d.%m.%Y %H:%M")
     return (
-        "📋 *Статус бота*\n\n"
-        f"🔎 Проверено событий: *{_escape(str(checked_events))}*\n"
-        f"📨 Отправлено сигналов и предупреждений: *{_escape(str(signals_sent))}*\n"
-        f"🕐 Текущее время Ереван: *{_escape(now_yerevan)}*\n"
-        f"⚡️ Последняя проверка календаря: {_escape(last_check)}"
+        "📋 <b>Статус бота</b>\n\n"
+        f"🔎 Проверено событий: <b>{checked_events}</b>\n"
+        f"📨 Отправлено сигналов и предупреждений: <b>{signals_sent}</b>\n"
+        f"🕐 Текущее время Ереван: <b>{now_yerevan}</b>\n"
+        f"⚡️ Последняя проверка календаря: {_esc(last_check)}"
     )

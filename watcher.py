@@ -179,7 +179,7 @@ class CalendarWatcher:
             await self._bot.send_message(
                 chat_id=self._chat_id,
                 text=text,
-                parse_mode="MarkdownV2",
+                parse_mode="HTML",
             )
             self._signals_sent += 1
             logger.info("Alert/signal message successfully sent to chat %s", self._chat_id)
