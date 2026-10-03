@@ -11,6 +11,7 @@ Key features:
 2. Post-news trade signals:
    - Immediately when Actual data is published.
    - Calculates deviation vs forecast and gives explicit LONG / SHORT direction for XAUT/USDT.
+   - Ignores old historical actuals on bot startup.
 """
 
 from __future__ import annotations
@@ -49,6 +50,9 @@ class CalendarWatcher:
 
         # Set of "{event_id}_{bucket}" to avoid duplicate pre-news alerts
         self._sent_pre_alerts: set[str] = set()
+
+        # Flag to seed existing events on startup without triggering historical alerts
+        self._is_first_poll: bool = True
 
         self._scheduler = AsyncIOScheduler(timezone="UTC")
         self._signals_sent: int = 0
@@ -117,6 +121,10 @@ class CalendarWatcher:
         for event in events:
             await self._process_event(event)
 
+        if self._is_first_poll:
+            self._is_first_poll = False
+            logger.info("Initial calendar baseline seeded with %d events", len(self._seen_actuals))
+
     async def _process_event(self, event: EconomicEvent) -> None:
         """
         1. Check pre-news warnings (60m, 30m, 5m).
@@ -151,14 +159,21 @@ class CalendarWatcher:
                     await self._send_message(msg)
 
         # 2. Actual data published trigger
-        prev_actual = self._seen_actuals.get(event.event_id, "")
+        prev_actual = self._seen_actuals.get(event.event_id, None)
         self._seen_actuals[event.event_id] = event.actual
+
+        # Ignore historical events on the initial poll
+        if self._is_first_poll:
+            return
 
         if not event.has_actual:
             return
 
-        if prev_actual.strip():
-            # Already handled this release
+        # Skip events that were already handled or happened more than 20 minutes ago
+        if prev_actual is not None and prev_actual.strip():
+            return
+
+        if event.minutes_until is not None and event.minutes_until < -20.0:
             return
 
         logger.info("New actual released for '%s': %r (was empty)", event.title, event.actual)
