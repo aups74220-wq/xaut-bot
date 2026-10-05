@@ -3,11 +3,12 @@ parser.py – Forex Factory calendar scraper.
 
 Extracts USD High-impact economic news events from Forex Factory calendar.
 Includes support for:
+- Cloudflare bypass via curl_cffi Chrome impersonation (with requests fallback).
 - Red impact (High impact) detection via CSS icons.
 - Parsing event date and time into Python datetime objects.
 - Calculating minutes remaining until the event based on the page's current clock.
 - Retrieving actual, forecast, and previous values.
-- Getting the most recent past event and the next upcoming event.
+- Seamless past/next news lookup across week boundaries (this week, last week, next week).
 """
 
 from __future__ import annotations
@@ -17,6 +18,13 @@ import logging
 import time
 from datetime import date, datetime
 from typing import Optional
+
+try:
+    from curl_cffi import requests as curl_requests
+    _HAVE_CURL_CFFI = True
+except ImportError:
+    import requests as curl_requests
+    _HAVE_CURL_CFFI = False
 
 import requests
 from bs4 import BeautifulSoup
@@ -34,7 +42,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-_REQUEST_TIMEOUT = 20
+_REQUEST_TIMEOUT = 25
 _RETRY_ATTEMPTS = 3
 _RETRY_BACKOFF = 3
 
@@ -42,7 +50,7 @@ _ua = UserAgent()
 
 
 def _build_session() -> requests.Session:
-    """Create a requests session with browser-like headers and optional proxy."""
+    """Create a standard requests session with browser-like headers."""
     session = requests.Session()
     session.headers.update(
         {
@@ -99,16 +107,31 @@ def _cell_text(cell) -> str:
     return cell.get_text(separator=" ", strip=True)
 
 
-def _fetch_html_calendar(session: requests.Session, url: str = FF_CALENDAR_URL) -> list[EconomicEvent]:
+def _fetch_html_calendar(url: str = FF_CALENDAR_URL) -> list[EconomicEvent]:
     """
     Scrape the Forex Factory HTML calendar page.
-    Extracts high-impact USD events with date/time, remaining minutes, actual, forecast, and previous data.
+    Uses curl_cffi for transparent Cloudflare bypass, falling back to requests.
     """
     logger.debug("Fetching HTML calendar from: %s", url)
-    response = session.get(url, timeout=_REQUEST_TIMEOUT)
-    response.raise_for_status()
 
-    soup = BeautifulSoup(response.text, _HTML_PARSER)
+    response_text = ""
+    if _HAVE_CURL_CFFI:
+        proxies = {"http": HTTP_PROXY, "https": HTTP_PROXY} if HTTP_PROXY else None
+        res = curl_requests.get(
+            url,
+            impersonate="chrome",
+            timeout=_REQUEST_TIMEOUT,
+            proxies=proxies,
+        )
+        res.raise_for_status()
+        response_text = res.text
+    else:
+        session = _build_session()
+        res = session.get(url, timeout=_REQUEST_TIMEOUT)
+        res.raise_for_status()
+        response_text = res.text
+
+    soup = BeautifulSoup(response_text, _HTML_PARSER)
     rows = soup.find_all("tr", class_=lambda c: c and "calendar__row" in c)
     if not rows:
         logger.warning("HTML parser: could not locate any calendar rows")
@@ -178,7 +201,7 @@ def _fetch_html_calendar(session: requests.Session, url: str = FF_CALENDAR_URL) 
             )
         )
 
-    logger.info("Forex Factory scraper: found %d high-impact USD events", len(events))
+    logger.info("Forex Factory scraper: found %d high-impact USD events for %s", len(events), url)
     return events
 
 
@@ -186,15 +209,14 @@ def fetch_forexfactory_calendar(url: str = FF_CALENDAR_URL) -> list[EconomicEven
     """
     Fetch high-impact USD events with retries.
     """
-    session = _build_session()
     last_exc: Optional[Exception] = None
 
     for attempt in range(1, _RETRY_ATTEMPTS + 1):
         try:
-            return _fetch_html_calendar(session, url=url)
-        except requests.RequestException as exc:
+            return _fetch_html_calendar(url=url)
+        except Exception as exc:
             last_exc = exc
-            logger.warning("Scraper network error on attempt %d/%d: %s", attempt, _RETRY_ATTEMPTS, exc)
+            logger.warning("Scraper error on attempt %d/%d: %s", attempt, _RETRY_ATTEMPTS, exc)
             if attempt < _RETRY_ATTEMPTS:
                 time.sleep(_RETRY_BACKOFF)
 
@@ -205,10 +227,12 @@ def fetch_forexfactory_calendar(url: str = FF_CALENDAR_URL) -> list[EconomicEven
 def get_past_and_next_events() -> tuple[Optional[EconomicEvent], Optional[EconomicEvent]]:
     """
     Identify:
-    1. The most recent past high-impact USD event (with actuals or past time).
-    2. The next upcoming high-impact USD event (looking into next week if needed).
+    1. The most recent past high-impact USD event.
+       (If none yet this week, looks back at last week's calendar).
+    2. The next upcoming high-impact USD event.
+       (If none left this week, looks forward at next week's calendar).
     """
-    this_week_events = fetch_forexfactory_calendar()
+    this_week_events = fetch_forexfactory_calendar(FF_CALENDAR_URL)
 
     past_events = [
         e for e in this_week_events
@@ -222,7 +246,20 @@ def get_past_and_next_events() -> tuple[Optional[EconomicEvent], Optional[Econom
     last_past = past_events[-1] if past_events else None
     next_future = future_events[0] if future_events else None
 
-    # If no upcoming events left in the current week, check next week's calendar
+    # If no past events found this week (e.g. early Monday morning), look at last week
+    if last_past is None:
+        try:
+            last_week_events = fetch_forexfactory_calendar("https://www.forexfactory.com/calendar?week=last")
+            last_week_past = [
+                e for e in last_week_events
+                if e.has_actual or (e.minutes_until is not None and e.minutes_until <= 0)
+            ]
+            if last_week_past:
+                last_past = last_week_past[-1]
+        except Exception as exc:
+            logger.error("Failed to fetch last week's events: %s", exc)
+
+    # If no upcoming events left this week (e.g. weekend), look at next week
     if next_future is None:
         try:
             next_week_events = fetch_forexfactory_calendar("https://www.forexfactory.com/calendar?week=next")
